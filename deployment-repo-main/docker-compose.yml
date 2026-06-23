@@ -1,0 +1,400 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database for Auth, Inventory, Order, Payment services
+  postgres:
+    image: postgres:16-alpine
+    container_name: green-mart-postgres
+    environment:
+      POSTGRES_USER: greenmart
+      POSTGRES_PASSWORD: greenmart123
+      POSTGRES_DB: greenmart
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/init-scripts/postgres:/docker-entrypoint-initdb.d
+    networks:
+      - green-mart-network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U greenmart" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MongoDB for User and Product services
+  mongodb:
+    image: mongo:7.0
+    container_name: green-mart-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: greenmart
+      MONGO_INITDB_ROOT_PASSWORD: greenmart123
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - ./docker/init-scripts/mongo:/docker-entrypoint-initdb.d
+    networks:
+      - green-mart-network
+    healthcheck:
+      test: [ "CMD", "mongosh", "--eval", "db.adminCommand('ping')" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # pgAdmin for PostgreSQL management (optional - development)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: green-mart-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@greenmart.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - green-mart-network
+
+  # Mongo Express for MongoDB management (optional - development)
+  mongo-express:
+    image: mongo-express:latest
+    container_name: green-mart-mongo-express
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: greenmart
+      ME_CONFIG_MONGODB_ADMINPASSWORD: greenmart123
+      ME_CONFIG_MONGODB_URL: mongodb://greenmart:greenmart123@mongodb:27017/
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: admin123
+    ports:
+      - "8081:8081"
+    depends_on:
+      - mongodb
+    networks:
+      - green-mart-network
+
+  # Eureka Service Discovery Server
+  eureka-server:
+    build:
+      context: ./eureka-server
+      dockerfile: Dockerfile
+    container_name: green-mart-eureka
+    ports:
+      - "8761:8761"
+    networks:
+      - green-mart-network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8761/actuator/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: green-mart-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      - EUREKA_SERVER=http://eureka-server:8761/eureka/
+      - JWT_SECRET=YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY3ODkwYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo=
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - green-mart-network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/actuator/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Auth Service
+  auth-service:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile
+    container_name: green-mart-auth
+    ports:
+      - "8082:8082"
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/auth_service
+      - SPRING_DATASOURCE_USERNAME=greenmart
+      - SPRING_DATASOURCE_PASSWORD=greenmart123
+      - EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://eureka-server:8761/eureka/
+    depends_on:
+      postgres:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - green-mart-network
+    healthcheck:
+      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8082/actuator/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # User Service (Node.js)
+  user-service:
+    build:
+      context: ./user-service
+      dockerfile: Dockerfile
+    container_name: green-mart-user
+    ports:
+      - "8083:8083"
+    environment:
+      - PORT=8083
+      - MONGODB_URI=mongodb://greenmart:greenmart123@mongodb:27017/user_service?authSource=admin
+      - EUREKA_HOST=eureka-server
+      - EUREKA_PORT=8761
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - green-mart-network
+    healthcheck:
+      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8083/actuator/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Product Service (Node.js)
+  product-service:
+    build:
+      context: ./product-service
+      dockerfile: Dockerfile
+    container_name: green-mart-product
+    ports:
+      - "8084:8084"
+    environment:
+      - PORT=8084
+      - MONGODB_URI=mongodb://greenmart:greenmart123@mongodb:27017/product_service?authSource=admin
+      - EUREKA_HOST=eureka-server
+      - EUREKA_PORT=8761
+      - INVENTORY_SERVICE_URL=http://inventory-service:8086
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - green-mart-network
+    healthcheck:
+      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8084/actuator/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Inventory Service (Node.js)
+  inventory-service:
+    build:
+      context: ./inventory-service
+      dockerfile: Dockerfile
+    container_name: green-mart-inventory
+    ports:
+      - "8086:8086"
+    environment:
+      - PORT=8086
+      - MONGODB_URI=mongodb://greenmart:greenmart123@mongodb:27017/inventory_service?authSource=admin
+      - EUREKA_HOST=eureka-server
+      - EUREKA_PORT=8761
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=greenmart
+      - RABBITMQ_PASSWORD=greenmart123
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - green-mart-network
+    healthcheck:
+      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8086/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Order Service (Spring Boot)
+  order-service:
+    build:
+      context: ./order-service
+      dockerfile: Dockerfile
+    container_name: green-mart-order
+    ports:
+      - "8085:8085"
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=order_service
+      - DB_USER=greenmart
+      - DB_PASSWORD=greenmart123
+      - EUREKA_SERVER=http://eureka-server:8761/eureka/
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=greenmart
+      - RABBITMQ_PASSWORD=greenmart123
+    depends_on:
+      postgres:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - green-mart-network
+    healthcheck:
+      test: [ "CMD", "wget", "-q", "-O", "-", "http://localhost:8085/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Payment Service (Spring Boot)
+  payment-service:
+    build:
+      context: ./payment-service
+      dockerfile: Dockerfile
+    container_name: green-mart-payment
+    ports:
+      - "8087:8087"
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=payment_service
+      - DB_USER=greenmart
+      - DB_PASSWORD=greenmart123
+      - EUREKA_SERVER=http://eureka-server:8761/eureka/
+    depends_on:
+      postgres:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - green-mart-network
+    healthcheck:
+      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8087/actuator/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Checkout Service (SAGA Orchestrator - Spring Boot)
+  checkout-service:
+    build:
+      context: ./checkout-service
+      dockerfile: Dockerfile
+    container_name: green-mart-checkout
+    ports:
+      - "8088:8088"
+    environment:
+      - EUREKA_SERVER=http://eureka-server:8761/eureka/
+      - ORDER_SERVICE_URL=http://order-service:8085
+      - INVENTORY_SERVICE_URL=http://inventory-service:8086
+      - PAYMENT_SERVICE_URL=http://payment-service:8087
+    depends_on:
+      order-service:
+        condition: service_healthy
+      inventory-service:
+        condition: service_healthy
+      payment-service:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    networks:
+      - green-mart-network
+    healthcheck:
+      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8088/actuator/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # User-Facing Frontend (React + Vite, served by Nginx)
+  ecomm-user-client:
+    build:
+      context: ./ecomm-user-client
+      dockerfile: Dockerfile
+    container_name: green-mart-user-client
+    ports:
+      - "3000:80"
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+    networks:
+      - green-mart-network
+    healthcheck:
+      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # RabbitMQ Message Broker
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: green-mart-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: greenmart
+      RABBITMQ_DEFAULT_PASS: greenmart123
+    ports:
+      - "5672:5672"   # AMQP port
+      - "15672:15672" # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - green-mart-network
+    healthcheck:
+      test: [ "CMD", "rabbitmq-diagnostics", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Notification Service (Node.js)
+  notification-service:
+    build:
+      context: ./notification-service
+      dockerfile: Dockerfile
+    container_name: green-mart-notification
+    ports:
+      - "8089:8089"
+    environment:
+      - PORT=8089
+      - EUREKA_HOST=eureka-server
+      - EUREKA_PORT=8761
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=greenmart
+      - RABBITMQ_PASSWORD=greenmart123
+      - AUTH_SERVICE_URL=http://auth-service:8082
+      - SMTP_HOST=smtp.gmail.com
+      - SMTP_PORT=587
+      - SMTP_EMAIL=${SMTP_EMAIL:-your-email@gmail.com}
+      - SMTP_APP_PASSWORD=${SMTP_APP_PASSWORD:-your-app-password}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+      auth-service:
+        condition: service_healthy
+    networks:
+      - green-mart-network
+    healthcheck:
+      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8089/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+volumes:
+  postgres_data:
+  mongodb_data:
+  rabbitmq_data:
+
+
+networks:
+  green-mart-network:
+    driver: bridge
