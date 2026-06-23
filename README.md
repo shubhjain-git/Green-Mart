@@ -1,0 +1,132 @@
+# Green Mart Backend - Microservices Infrastructure
+
+This directory contains the infrastructure setup for the Green Mart e-commerce microservices backend.
+
+## Architecture Overview
+
+```
+┌─────────────────┐     ┌─────────────────┐
+│   Frontend      │────▶│   API Gateway   │
+│  (React/Vue)    │     │   (Port 8080)   │
+└─────────────────┘     └────────┬────────┘
+                                 │
+                    ┌───────────▼───────────┐
+                    │   Service Discovery   │
+                    │   (Eureka - 8761)     │
+                    └───────────┬───────────┘
+                                │
+        ┌───────────────────────┼───────────────────────┐
+        │           │           │           │           │
+   ┌────▼────┐ ┌────▼────┐ ┌────▼────┐ ┌────▼────┐ ┌────▼────┐
+   │  Auth   │ │  User   │ │ Product │ │Inventory│ │  Order  │
+   │ Service │ │ Service │ │ Service │ │ Service │ │ Service │
+   └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘ └────┬────┘
+        │           │           │           │           │
+   ┌────▼────┐ ┌────▼────┐ ┌────▼────┐ ┌────▼────┐ ┌────▼────┐
+   │PostgreSQL│ │ MongoDB │ │ MongoDB │ │PostgreSQL│ │PostgreSQL│
+   │auth_svc │ │user_svc │ │prod_svc │ │ inv_svc │ │order_svc│
+   └─────────┘ └─────────┘ └─────────┘ └─────────┘ └─────────┘
+```
+
+## Quick Start
+
+### Prerequisites
+- Docker & Docker Compose
+- Java 17+ (for local development)
+- Maven 3.9+
+
+### 1. Start Databases Only
+```powershell
+docker-compose up -d postgres mongodb pgadmin mongo-express
+```
+
+### 2. Start All Infrastructure
+```powershell
+docker-compose up -d
+```
+
+### 3. Access Points
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| API Gateway | http://localhost:8080 | - |
+| Eureka Dashboard | http://localhost:8761 | - |
+| pgAdmin | http://localhost:5050 | admin@greenmart.com / admin123 |
+| Mongo Express | http://localhost:8081 | admin / admin123 |
+
+### Database Connections
+
+#### PostgreSQL
+- Host: `localhost`
+- Port: `5432`
+- Username: `greenmart`
+- Password: `greenmart123`
+- Databases: `auth_service`, `inventory_service`, `order_service`, `payment_service`
+
+#### MongoDB
+- Host: `localhost`
+- Port: `27017`
+- Username: `greenmart`
+- Password: `greenmart123`
+- Databases: `user_service`, `product_service`
+
+## Local Development
+
+### Run Eureka Server
+```powershell
+cd eureka-server
+./mvnw spring-boot:run
+```
+
+### Run API Gateway
+```powershell
+cd api-gateway
+./mvnw spring-boot:run
+```
+
+## Project Structure
+
+```
+green-mart-backend/
+├── docker-compose.yml          # Docker orchestration
+├── docker/
+│   └── init-scripts/
+│       ├── postgres/           # PostgreSQL init scripts
+│       │   └── 01-init.sql
+│       └── mongo/              # MongoDB init scripts
+│           └── 01-init.js
+├── eureka-server/              # Service Discovery
+│   ├── pom.xml
+│   ├── Dockerfile
+│   └── src/
+├── api-gateway/                # API Gateway
+│   ├── pom.xml
+│   ├── Dockerfile
+│   └── src/
+└── [microservices...]          # Individual services
+```
+
+## Service Routing (API Gateway)
+
+| Path | Service |
+|------|---------|
+| `/api/auth/**` | AUTH-SERVICE |
+| `/api/users/**` | USER-SERVICE |
+| `/api/products/**` | PRODUCT-SERVICE |
+| `/api/inventory/**` | INVENTORY-SERVICE |
+| `/api/orders/**` | ORDER-SERVICE |
+| `/api/checkout/**` | CHECKOUT-SERVICE |
+| `/api/payments/**` | PAYMENT-SERVICE |
+
+## Stopping Services
+
+```powershell
+# Stop all services
+docker-compose down
+
+# Stop and remove volumes (clean slate)
+docker-compose down -v
+```
+
+
+
